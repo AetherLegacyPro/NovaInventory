@@ -1,0 +1,16 @@
+[
+{
+  "modid": "nova_inventory",
+  "name": "Nova Inventory",
+  "description": "A 1.7.10 mod that doubles the inventory size in the most seamless way possible.",
+  "version": "1.0",
+  "mcversion": "1.7.10",
+  "url": "",
+  "updateUrl": "",
+  "authorList": ["Wojak"],
+  "credits": "Wojak and all those who still play and continue to support the small but dedicated 1.7.10 modding community",
+  "logoFile": "mod_image.png",
+  "screenshots": [],
+  "dependencies": []
+}
+]
