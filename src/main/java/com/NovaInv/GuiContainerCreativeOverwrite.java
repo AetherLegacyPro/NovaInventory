@@ -68,20 +68,23 @@ public class GuiContainerCreativeOverwrite extends InventoryEffectRenderer {
 
     //Container slot layout:
     //--------------------------
-    //0        crafting output
-    //1 - 4    crafting grid
-    //5 - 8    armor
-    //9 - 62   expanded main inventory
-    //63 - 71  hotbar
+    // 0       crafting result
+    // 1-4     crafting grid
+    // 5-8     armor
+    // 9-35    inventory page 0
+    // 36-44   hotbar
+    // 45-71   inventory page 1
 
-    private static final int NOVA_MAIN_START = 9;
-    private static final int NOVA_MAIN_VISIBLE_SIZE = 27;
-    private static final int NOVA_MAIN_TOTAL_SIZE = 54;
-    private static final int NOVA_MAIN_END = NOVA_MAIN_START + NOVA_MAIN_TOTAL_SIZE;
+    private static final int NOVA_PAGE_SIZE = 27;
 
-    private static final int NOVA_HOTBAR_START = 63;
-    private static final int NOVA_HOTBAR_SIZE = 9;
-    private static final int NOVA_HOTBAR_END = NOVA_HOTBAR_START + NOVA_HOTBAR_SIZE;
+    private static final int NOVA_PAGE_0_START = 9;
+    private static final int NOVA_PAGE_0_END = 36;
+
+    private static final int NOVA_HOTBAR_START = 36;
+    private static final int NOVA_HOTBAR_END = 45;
+
+    private static final int NOVA_PAGE_1_START = 45;
+    private static final int NOVA_PAGE_1_END = 72;
 
     private static final int NOVA_HIDDEN_X = -2000;
     private static final int NOVA_HIDDEN_Y = -2000;
@@ -311,33 +314,22 @@ public class GuiContainerCreativeOverwrite extends InventoryEffectRenderer {
     }
 
     protected void keyTyped(char typedChar, int keyCode) {
-        if (!CreativeTabs.creativeTabArray[selectedTabIndex].hasSearchBar())
-        {
-            if (GameSettings.isKeyDown(this.mc.gameSettings.keyBindChat))
-            {
+        if (!CreativeTabs.creativeTabArray[selectedTabIndex].hasSearchBar()) {
+            if (GameSettings.isKeyDown(this.mc.gameSettings.keyBindChat)) {
                 this.setCurrentCreativeTab(CreativeTabs.tabAllSearch);
-            }
-            else
-            {
+            } else {
                 super.keyTyped(typedChar, keyCode);
             }
-        }
-        else
-        {
-            if (this.field_147057_D)
-            {
+        } else {
+            if (this.field_147057_D) {
                 this.field_147057_D = false;
                 this.searchField.setText("");
             }
 
-            if (!this.checkHotbarKeys(keyCode))
-            {
-                if (this.searchField.textboxKeyTyped(typedChar, keyCode))
-                {
+            if (!this.checkHotbarKeys(keyCode)) {
+                if (this.searchField.textboxKeyTyped(typedChar, keyCode)) {
                     this.updateCreativeSearch();
-                }
-                else
-                {
+                } else {
                     super.keyTyped(typedChar, keyCode);
                 }
             }
@@ -443,8 +435,7 @@ public class GuiContainerCreativeOverwrite extends InventoryEffectRenderer {
             for (int k1 = 0; k1 < tabCount; ++k1) {
                 CreativeTabs tab = tabs[k1];
 
-                if (tab != null && this.func_147049_a(tab, l, i1))
-                {
+                if (tab != null && this.func_147049_a(tab, l, i1)) {
                     return;
                 }
             }
@@ -523,32 +514,42 @@ public class GuiContainerCreativeOverwrite extends InventoryEffectRenderer {
                 GuiContainerCreativeOverwrite.CreativeSlot creativeSlot = new GuiContainerCreativeOverwrite.CreativeSlot((Slot)playerContainer.inventorySlots.get(j), j);
                 containercreative.inventorySlots.add(creativeSlot);
 
+                //Armor Slots
                 if (j >= 5 && j < 9) {
-                    int k = j - 5;
-                    int l = k / 2;
-                    int i1 = k % 2;
-
-                    creativeSlot.xDisplayPosition = 9 + l * 54;
-                    creativeSlot.yDisplayPosition = 6 + i1 * 27;
+                    int armorIndex = j - 5;
+                    int column = armorIndex / 2;
+                    int row = armorIndex % 2;
+                    creativeSlot.xDisplayPosition = 9 + column * 54;
+                    creativeSlot.yDisplayPosition = 6 + row * 27;
                 }
+
+                //Hides the crafting table in the inventory
                 else if (j >= 0 && j < 5) {
                     creativeSlot.xDisplayPosition = NOVA_HIDDEN_X;
                     creativeSlot.yDisplayPosition = NOVA_HIDDEN_Y;
                 }
-                else if (j >= NOVA_MAIN_START && j < NOVA_MAIN_END) {
+
+                //Page 0 slots
+                else if (j >= NOVA_PAGE_0_START && j < NOVA_PAGE_0_END) {
                     this.novaPositionCreativeInventorySlot(creativeSlot, j);
                 }
+
+                //Page 1 slots
                 else if (j >= NOVA_HOTBAR_START && j < NOVA_HOTBAR_END) {
                     int hotbarIndex = j - NOVA_HOTBAR_START;
-
                     creativeSlot.xDisplayPosition = NOVA_CREATIVE_INV_X + hotbarIndex * 18;
                     creativeSlot.yDisplayPosition = NOVA_CREATIVE_HOTBAR_Y;
+                }
+
+                else if (j >= NOVA_PAGE_1_START && j < NOVA_PAGE_1_END) {
+                    this.novaPositionCreativeInventorySlot(creativeSlot, j);
                 }
                 else {
                     creativeSlot.xDisplayPosition = NOVA_HIDDEN_X;
                     creativeSlot.yDisplayPosition = NOVA_HIDDEN_Y;
                 }
             }
+
 
             this.field_147064_C = new Slot(field_147060_v, 0, 173, 112);
             containercreative.inventorySlots.add(this.field_147064_C);
@@ -965,18 +966,17 @@ public class GuiContainerCreativeOverwrite extends InventoryEffectRenderer {
     }
 
     private void novaPositionCreativeInventorySlot(Slot slot, int containerSlotIndex) {
-        int visibleStart = NOVA_MAIN_START + this.novaCreativeInventoryPage * NOVA_MAIN_VISIBLE_SIZE;
-        int visibleEnd = visibleStart + NOVA_MAIN_VISIBLE_SIZE;
+        int visibleStart = this.novaCreativeInventoryPage == 0 ? NOVA_PAGE_0_START : NOVA_PAGE_1_START;
+
+        int visibleEnd = visibleStart + NOVA_PAGE_SIZE;
 
         if (containerSlotIndex >= visibleStart && containerSlotIndex < visibleEnd) {
             int visibleIndex = containerSlotIndex - visibleStart;
-            int col = visibleIndex % 9;
+            int column = visibleIndex % 9;
             int row = visibleIndex / 9;
-
-            slot.xDisplayPosition = NOVA_CREATIVE_INV_X + col * 18;
+            slot.xDisplayPosition = NOVA_CREATIVE_INV_X + column * 18;
             slot.yDisplayPosition = NOVA_CREATIVE_INV_Y + row * 18;
-        }
-        else {
+        } else {
             slot.xDisplayPosition = NOVA_HIDDEN_X;
             slot.yDisplayPosition = NOVA_HIDDEN_Y;
         }
@@ -991,21 +991,28 @@ public class GuiContainerCreativeOverwrite extends InventoryEffectRenderer {
             return;
         }
 
-        GuiContainerCreativeOverwrite.ContainerCreative containercreative = (GuiContainerCreativeOverwrite.ContainerCreative)this.inventorySlots;
+        GuiContainerCreativeOverwrite.ContainerCreative container = (GuiContainerCreativeOverwrite.ContainerCreative)this.inventorySlots;
 
-        for (int i = 0; i < containercreative.inventorySlots.size(); ++i) {
-            Slot slot = (Slot)containercreative.inventorySlots.get(i);
-
-            //Stops Desyncing with the hotbar in creative
+        for (int index = 0; index < container.inventorySlots.size(); ++index) {
+            Slot slot = (Slot)container.inventorySlots.get(index);
             int realContainerSlot = this.novaGetRealPlayerContainerSlotIndex(slot);
 
-            if (realContainerSlot >= NOVA_MAIN_START && realContainerSlot < NOVA_MAIN_END) {
+            //Page 0
+            if (realContainerSlot >= NOVA_PAGE_0_START && realContainerSlot < NOVA_PAGE_0_END) {
                 this.novaPositionCreativeInventorySlot(slot, realContainerSlot);
             }
+
+            //Makes the hotbar always visible
             else if (realContainerSlot >= NOVA_HOTBAR_START && realContainerSlot < NOVA_HOTBAR_END) {
                 int hotbarIndex = realContainerSlot - NOVA_HOTBAR_START;
+
                 slot.xDisplayPosition = NOVA_CREATIVE_INV_X + hotbarIndex * 18;
                 slot.yDisplayPosition = NOVA_CREATIVE_HOTBAR_Y;
+            }
+
+            //Page 1
+            else if (realContainerSlot >= NOVA_PAGE_1_START && realContainerSlot < NOVA_PAGE_1_END) {
+                this.novaPositionCreativeInventorySlot(slot, realContainerSlot);
             }
         }
     }
@@ -1068,12 +1075,14 @@ public class GuiContainerCreativeOverwrite extends InventoryEffectRenderer {
             page = 1;
         }
 
+        //Syncs selected creative inventory page to server otherwise hotbar is unusable in creative mode
         this.novaCreativeInventoryPage = page;
 
         InventoryPageState.setPage(page);
 
-        //Syncs selected creative inventory page to server otherwise hotbar is unusable in creative mode
-        NovaInventory.NETWORK.sendToServer(new PacketInventoryPage(page));
+        //Determines if the creative inventory page 1 should be hidden or not
+        NovaInventory.NETWORK.sendToServer(new PacketInventoryPage(this.novaCreativeInventoryPage, true));
+
         this.novaUpdateCreativeInventoryTabSlots();
     }
 

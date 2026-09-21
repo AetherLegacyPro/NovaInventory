@@ -9,8 +9,7 @@ import net.minecraft.item.ItemArmor;
 import net.minecraft.item.ItemStack;
 import net.minecraft.util.IIcon;
 
-public class InventoryOverhaulArmorSlot extends Slot
-{
+public class InventoryOverhaulArmorSlot extends Slot {
     private final int armorSlot;
     private final EntityPlayer player;
 
@@ -25,8 +24,7 @@ public class InventoryOverhaulArmorSlot extends Slot
     }
 
     public boolean isItemValid(ItemStack stack) {
-        if (stack == null)
-        {
+        if (stack == null) {
             return false;
         }
 

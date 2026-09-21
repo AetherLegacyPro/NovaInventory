@@ -5,7 +5,6 @@ import cpw.mods.fml.relauncher.SideOnly;
 import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.achievement.GuiAchievements;
 import net.minecraft.client.gui.achievement.GuiStats;
-import net.minecraft.client.gui.inventory.GuiContainerCreative;
 import net.minecraft.client.renderer.InventoryEffectRenderer;
 import net.minecraft.client.renderer.OpenGlHelper;
 import net.minecraft.client.renderer.RenderHelper;
@@ -13,6 +12,7 @@ import net.minecraft.client.renderer.entity.RenderManager;
 import net.minecraft.client.resources.I18n;
 import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.entity.player.EntityPlayer;
+import net.minecraft.inventory.Container;
 import net.minecraft.inventory.Slot;
 import net.minecraft.util.ResourceLocation;
 import org.lwjgl.input.Mouse;
@@ -20,8 +20,7 @@ import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL12;
 
 @SideOnly(Side.CLIENT)
-public class GuiInventoryOverwrite extends InventoryEffectRenderer
-{
+public class GuiInventoryOverwrite extends InventoryEffectRenderer {
     private static final ResourceLocation VANILLA_INVENTORY_TEXTURE = new ResourceLocation("textures/gui/container/inventory.png");
 
     private float xSizeFloat;
@@ -32,9 +31,15 @@ public class GuiInventoryOverwrite extends InventoryEffectRenderer
     private static final int GUI_HEIGHT = 166;
 
     //Define Container slot IDs.
-    private static final int MAIN_INV_CONTAINER_START = 9;
-    private static final int MAIN_INV_CONTAINER_SIZE = 54;
-    private static final int HOTBAR_CONTAINER_START = 63;
+    //.........................
+     //9-35   page 0
+     //36-44  hotbar
+     //45-71  page 1
+
+    private static final int PAGE_0_CONTAINER_START = 9;
+    private static final int PAGE_1_CONTAINER_START = 45;
+
+    private static final int HOTBAR_CONTAINER_START = 36;
     private static final int HOTBAR_CONTAINER_SIZE = 9;
 
     //Only 27 main inventory slots are visible at once as to avoid compatibility issues with every other GUI in existence.
@@ -63,9 +68,9 @@ public class GuiInventoryOverwrite extends InventoryEffectRenderer
     private boolean draggingScrollbar = false;
 
     public GuiInventoryOverwrite(EntityPlayer player) {
-        super(player.inventoryContainer);
+        super(NovaPlayerBridge.getInventoryContainer(player));
 
-        this.allowUserInput = true;
+        NovaGuiBridge.setAllowUserInput(this, true);
 
         this.xSize = GUI_WIDTH;
         this.ySize = GUI_HEIGHT;
@@ -74,34 +79,14 @@ public class GuiInventoryOverwrite extends InventoryEffectRenderer
         this.inventoryPage = InventoryPageState.getPage();
     }
 
-    public void updateScreen()
-    {
-        if (this.mc.playerController.isInCreativeMode())
-        {
-            this.mc.displayGuiScreen(new GuiContainerCreative(this.mc.thePlayer));
-        }
-    }
+    public void initGui() {
+        super.initGui();
 
-    public void initGui()
-    {
         this.inventoryPage = InventoryPageState.getPage();
-        NovaInventory.NETWORK.sendToServer(new PacketInventoryPage(this.inventoryPage));
+
+        NovaInventory.NETWORK.sendToServer(new PacketInventoryPage(this.inventoryPage, false));
+
         this.updateScrolledInventorySlots();
-
-        this.buttonList.clear();
-
-        if (this.mc.playerController.isInCreativeMode())
-        {
-            this.mc.displayGuiScreen(new GuiContainerCreative(this.mc.thePlayer));
-        }
-        else
-        {
-            super.initGui();
-
-            this.inventoryPage = InventoryPageState.getPage();
-
-            this.updateScrolledInventorySlots();
-        }
     }
 
     protected void drawGuiContainerForegroundLayer(int mouseX, int mouseY) {
@@ -118,8 +103,7 @@ public class GuiInventoryOverwrite extends InventoryEffectRenderer
     }
 
     //Vanilla class
-    protected void drawGuiContainerBackgroundLayer(float partialTicks, int mouseX, int mouseY)
-    {
+    protected void drawGuiContainerBackgroundLayer(float partialTicks, int mouseX, int mouseY) {
         GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
 
         this.mc.getTextureManager().bindTexture(VANILLA_INVENTORY_TEXTURE);
@@ -134,38 +118,51 @@ public class GuiInventoryOverwrite extends InventoryEffectRenderer
     }
 
     private void updateScrolledInventorySlots() {
-        //Which inventory slots should be visible?
-        int visibleStart = MAIN_INV_CONTAINER_START + this.inventoryPage * VISIBLE_MAIN_SLOTS;
-        int visibleEnd = visibleStart + VISIBLE_MAIN_SLOTS;
+        Container container = this.inventorySlots;
 
-        for (int containerSlot = MAIN_INV_CONTAINER_START;
-             containerSlot < MAIN_INV_CONTAINER_START + MAIN_INV_CONTAINER_SIZE;
-             containerSlot++)
-        {
-            Slot slot = (Slot)this.inventorySlots.inventorySlots.get(containerSlot);
+        if (container == null) {
+            return;
+        }
 
-            if (containerSlot >= visibleStart && containerSlot < visibleEnd)
-            {
-                int visibleIndex = containerSlot - visibleStart;
-                int col = visibleIndex % 9;
-                int row = visibleIndex / 9;
+        //Pages 0 and 1 overlap each other but only show one at a time
+        for (int index = 0; index < VISIBLE_MAIN_SLOTS; ++index) {
+            Slot page0Slot = NovaContainerBridge.getSlot(container, PAGE_0_CONTAINER_START + index);
+            Slot page1Slot = NovaContainerBridge.getSlot(container, PAGE_1_CONTAINER_START + index);
 
-                slot.xDisplayPosition = MAIN_INV_X + col * 18;
-                slot.yDisplayPosition = MAIN_INV_Y + row * 18;
+            int column = index % 9;
+            int row = index / 9;
+
+            int visibleX = MAIN_INV_X + column * 18;
+            int visibleY = MAIN_INV_Y + row * 18;
+
+            if (page0Slot != null) {
+                if (this.inventoryPage == 0) {
+                    page0Slot.xDisplayPosition = visibleX;
+                    page0Slot.yDisplayPosition = visibleY;
+                } else {
+                    page0Slot.xDisplayPosition = HIDDEN_SLOT_X;
+                    page0Slot.yDisplayPosition = HIDDEN_SLOT_Y;
+                }
             }
-            else
-            {
-                slot.xDisplayPosition = HIDDEN_SLOT_X;
-                slot.yDisplayPosition = HIDDEN_SLOT_Y;
+
+            if (page1Slot != null) {
+                if (this.inventoryPage == 1) {
+                    page1Slot.xDisplayPosition = visibleX;
+                    page1Slot.yDisplayPosition = visibleY;
+                } else {
+                    page1Slot.xDisplayPosition = HIDDEN_SLOT_X;
+                    page1Slot.yDisplayPosition = HIDDEN_SLOT_Y;
+                }
             }
         }
 
-        //Hotbar's position is never altered
-        for (int i = 0; i < HOTBAR_CONTAINER_SIZE; i++)
-        {
-            Slot slot = (Slot)this.inventorySlots.inventorySlots.get(HOTBAR_CONTAINER_START + i);
-            slot.xDisplayPosition = HOTBAR_X + i * 18;
-            slot.yDisplayPosition = HOTBAR_Y;
+        //Always show the hotbar
+        for (int index = 0; index < HOTBAR_CONTAINER_SIZE; ++index) {
+            Slot hotbarSlot = NovaContainerBridge.getSlot(container, HOTBAR_CONTAINER_START + index);
+            if (hotbarSlot != null) {
+                hotbarSlot.xDisplayPosition = HOTBAR_X + index * 18;
+                hotbarSlot.yDisplayPosition = HOTBAR_Y;
+            }
         }
     }
 
@@ -179,9 +176,7 @@ public class GuiInventoryOverwrite extends InventoryEffectRenderer
         int maxThumbTravel = SCROLLBAR_WIDTH - thumbWidth;
 
         int thumbX = trackX;
-
-        if (PAGE_COUNT > 1)
-        {
+        if (PAGE_COUNT > 1) {
             thumbX = trackX + (maxThumbTravel * this.inventoryPage) / (PAGE_COUNT - 1);
         }
 
@@ -190,8 +185,7 @@ public class GuiInventoryOverwrite extends InventoryEffectRenderer
     }
 
     protected void mouseClicked(int mouseX, int mouseY, int mouseButton) {
-        if (mouseButton == 0 && this.isMouseOverScrollbar(mouseX, mouseY))
-        {
+        if (mouseButton == 0 && this.isMouseOverScrollbar(mouseX, mouseY)) {
             this.draggingScrollbar = true;
             this.setPageFromMouse(mouseX);
             this.updateScrolledInventorySlots();
@@ -201,10 +195,8 @@ public class GuiInventoryOverwrite extends InventoryEffectRenderer
         super.mouseClicked(mouseX, mouseY, mouseButton);
     }
 
-    protected void mouseClickMove(int mouseX, int mouseY, int clickedMouseButton, long timeSinceLastClick)
-    {
-        if (this.draggingScrollbar)
-        {
+    protected void mouseClickMove(int mouseX, int mouseY, int clickedMouseButton, long timeSinceLastClick) {
+        if (this.draggingScrollbar) {
             this.setPageFromMouse(mouseX);
             this.updateScrolledInventorySlots();
             return;
@@ -213,35 +205,26 @@ public class GuiInventoryOverwrite extends InventoryEffectRenderer
         super.mouseClickMove(mouseX, mouseY, clickedMouseButton, timeSinceLastClick);
     }
 
-    protected void mouseMovedOrUp(int mouseX, int mouseY, int state)
-    {
-        if (state == 0)
-        {
+    protected void mouseMovedOrUp(int mouseX, int mouseY, int state) {
+        if (state == 0) {
             this.draggingScrollbar = false;
         }
 
         super.mouseMovedOrUp(mouseX, mouseY, state);
     }
 
-    public void handleMouseInput()
-    {
+    public void handleMouseInput() {
         super.handleMouseInput();
 
         int wheel = Mouse.getEventDWheel();
-
-        if (wheel != 0)
-        {
+        if (wheel != 0) {
             int mouseX = Mouse.getEventX() * this.width / this.mc.displayWidth;
             int mouseY = this.height - Mouse.getEventY() * this.height / this.mc.displayHeight - 1;
 
-            if (this.isMouseInsideInventory(mouseX, mouseY))
-            {
-                if (wheel < 0)
-                {
+            if (this.isMouseInsideInventory(mouseX, mouseY)) {
+                if (wheel < 0) {
                     this.setInventoryPage(this.inventoryPage + 1);
-                }
-                else
-                {
+                } else {
                     this.setInventoryPage(this.inventoryPage - 1);
                 }
 
@@ -250,16 +233,14 @@ public class GuiInventoryOverwrite extends InventoryEffectRenderer
         }
     }
 
-    private boolean isMouseInsideInventory(int mouseX, int mouseY)
-    {
+    private boolean isMouseInsideInventory(int mouseX, int mouseY) {
         int left = this.guiLeft;
         int top = this.guiTop;
 
         return mouseX >= left && mouseX < left + this.xSize && mouseY >= top && mouseY < top + this.ySize;
     }
 
-    private boolean isMouseOverScrollbar(int mouseX, int mouseY)
-    {
+    private boolean isMouseOverScrollbar(int mouseX, int mouseY) {
         int left = this.guiLeft;
         int top = this.guiTop;
 
@@ -275,24 +256,19 @@ public class GuiInventoryOverwrite extends InventoryEffectRenderer
 
         int relativeX = mouseX - trackX;
 
-        if (relativeX < 0)
-        {
+        if (relativeX < 0) {
             relativeX = 0;
         }
 
-        if (relativeX > SCROLLBAR_WIDTH)
-        {
+        if (relativeX > SCROLLBAR_WIDTH) {
             relativeX = SCROLLBAR_WIDTH;
         }
 
         int page;
 
-        if (relativeX < SCROLLBAR_WIDTH / 2)
-        {
+        if (relativeX < SCROLLBAR_WIDTH / 2) {
             page = 0;
-        }
-        else
-        {
+        } else {
             page = 1;
         }
 
@@ -300,18 +276,15 @@ public class GuiInventoryOverwrite extends InventoryEffectRenderer
     }
 
     private void setInventoryPage(int page) {
-        if (page < 0)
-        {
+        if (page < 0) {
             page = 0;
         }
 
-        if (page >= PAGE_COUNT)
-        {
+        if (page >= PAGE_COUNT) {
             page = PAGE_COUNT - 1;
         }
 
         this.inventoryPage = page;
-
         InventoryPageState.setPage(page);
 
         //Sync the page last opening so shift clicking is possible

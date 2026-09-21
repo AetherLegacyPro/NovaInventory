@@ -6,6 +6,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
+import cpw.mods.fml.common.Loader;
 import net.minecraft.client.gui.Gui;
 import net.minecraft.client.gui.inventory.GuiContainer;
 import net.minecraft.entity.player.InventoryPlayer;
@@ -13,8 +14,7 @@ import net.minecraft.inventory.Container;
 import net.minecraft.inventory.Slot;
 import org.lwjgl.input.Mouse;
 
-public final class GuiContainerInventoryPager
-{
+public final class GuiContainerInventoryPager {
     //Container slot layout:
     //--------------------------
     //0        crafting output
@@ -49,34 +49,43 @@ public final class GuiContainerInventoryPager
     private static final int SCROLLBAR_X_OFFSET = -1;
     private static final int SCROLLBAR_Y_OFFSET = 0;
 
-    private GuiContainerInventoryPager()
-    {
+    private GuiContainerInventoryPager() {
     }
 
-    public static void updateSlots(GuiContainer gui)
+    private static boolean isArchaicFixLoaded()
     {
-        if (gui == null || isExcludedGui(gui))
-        {
+        return Loader.isModLoaded("archaicfix");
+    }
+
+    public static void updateSlots(GuiContainer gui) {
+        if (gui == null) {
+            return;
+        }
+
+        //Hides second page of the inventory if ArchaicFix is installed
+        if (isArchaicFixLoaded() && isCreativeGui(gui)) {
+            hideExtraSlotsInCreative(gui);
+            return;
+        }
+
+        if (isExcludedGui(gui)) {
             return;
         }
 
         Container container = getContainer(gui);
-
-        if (container == null)
-        {
+        if (container == null) {
             return;
         }
+
 
         List<Slot> page0 = getPlayerSlots(container, PAGE_0_START, PAGE_0_END);
         List<Slot> page1 = getPlayerSlots(container, PAGE_1_START, PAGE_1_END);
 
-        if (page0.size() != MAIN_PAGE_SIZE || page1.size() != MAIN_PAGE_SIZE)
-        {
+        if (page0.size() != MAIN_PAGE_SIZE || page1.size() != MAIN_PAGE_SIZE) {
             return;
         }
 
-        if (!SYNCED_CONTAINERS.containsKey(container))
-        {
+        if (!SYNCED_CONTAINERS.containsKey(container)) {
             syncPageToServer(InventoryPageState.getPage());
             SYNCED_CONTAINERS.put(container, Boolean.TRUE);
         }
@@ -85,8 +94,7 @@ public final class GuiContainerInventoryPager
 
         int page = InventoryPageState.getPage();
 
-        for (int i = 0; i < MAIN_PAGE_SIZE; i++)
-        {
+        for (int i = 0; i < MAIN_PAGE_SIZE; i++) {
             Slot page0Slot = page0.get(i);
             Slot page1Slot = page1.get(i);
 
@@ -95,16 +103,13 @@ public final class GuiContainerInventoryPager
             int originalX = original[0];
             int originalY = original[1];
 
-            if (page == 0)
-            {
+            if (page == 0) {
                 page0Slot.xDisplayPosition = originalX;
                 page0Slot.yDisplayPosition = originalY;
 
                 page1Slot.xDisplayPosition = HIDDEN_X;
                 page1Slot.yDisplayPosition = HIDDEN_Y;
-            }
-            else
-            {
+            } else {
                 page1Slot.xDisplayPosition = originalX;
                 page1Slot.yDisplayPosition = originalY;
 
@@ -114,22 +119,67 @@ public final class GuiContainerInventoryPager
         }
     }
 
-    public static void drawScrollbar(GuiContainer gui) {
-        if (gui == null || isExcludedGui(gui))
-        {
+    private static void hideExtraSlotsInCreative(GuiContainer gui) {
+        if (!isArchaicFixLoaded()) {
             return;
         }
 
-        if (!hasPagedInventory(gui))
-        {
+        Container container = getContainer(gui);
+
+        if (container == null) {
+            return;
+        }
+
+        List slots = NovaContainerBridge.getInventorySlots(container);
+
+        // 0-8    crafting/armor
+        // 9-35   page 0
+        // 36-44  hotbar
+        // 45-71  page 1
+        // 72     delete slot
+
+        if (slots.size() < 72) {
+            return;
+        }
+
+        for (int i = 0; i < 9; ++i) {
+            int containerSlot = 36 + i;
+
+            if (containerSlot >= slots.size()) {
+                break;
+            }
+
+            Object object = slots.get(containerSlot);
+            if (object instanceof Slot) {
+                Slot slot = (Slot)object;
+                slot.xDisplayPosition = 9 + i * 18;
+                slot.yDisplayPosition = 112;
+            }
+        }
+
+        //Hides page 1, otherwise vanilla thinks they are more hotbar slots or something, causes issues without this...
+        for (int containerSlot = 45; containerSlot < 72 && containerSlot < slots.size(); ++containerSlot) {
+            Object object = slots.get(containerSlot);
+            if (object instanceof Slot) {
+                Slot slot = (Slot)object;
+                slot.xDisplayPosition = HIDDEN_X;
+                slot.yDisplayPosition = HIDDEN_Y;
+            }
+        }
+    }
+
+    public static void drawScrollbar(GuiContainer gui) {
+        if (gui == null || isCreativeGui(gui) || isExcludedGui(gui) || !hasPagedInventory(gui)) {
+            return;
+        }
+
+        if (!hasPagedInventory(gui)) {
             return;
         }
 
         Container container = getContainer(gui);
         List<Slot> page0 = getPlayerSlots(container, PAGE_0_START, PAGE_0_END);
-
-        if (page0.size() != MAIN_PAGE_SIZE)
-        {
+        if (page0.size() != MAIN_PAGE_SIZE) {
             return;
         }
 
@@ -157,25 +207,16 @@ public final class GuiContainerInventoryPager
         Gui.drawRect(thumbX + 1, trackY, thumbX + thumbWidth - 1, trackY + SCROLLBAR_HEIGHT, 0xFFFFFFFF);
     }
 
-    public static boolean mouseClicked(GuiContainer gui, int mouseX, int mouseY, int button)
-    {
-        if (gui == null || isExcludedGui(gui))
-        {
+    public static boolean mouseClicked(GuiContainer gui, int mouseX, int mouseY, int button) {
+        if (gui == null || isCreativeGui(gui) || isExcludedGui(gui) || button != 0 || !hasPagedInventory(gui)) {
             return false;
         }
 
-        if (button != 0)
-        {
+        if (!hasPagedInventory(gui)) {
             return false;
         }
 
-        if (!hasPagedInventory(gui))
-        {
-            return false;
-        }
-
-        if (isMouseOverScrollbar(gui, mouseX, mouseY))
-        {
+        if (isMouseOverScrollbar(gui, mouseX, mouseY)) {
             setPageFromMouse(gui, mouseX);
             updateSlots(gui);
             return true;
@@ -185,10 +226,8 @@ public final class GuiContainerInventoryPager
     }
 
     //Use mousewheel to easily switch from both inventory screens
-    public static void handleMouseInput(GuiContainer gui)
-    {
-        if (gui == null || isExcludedGui(gui))
-        {
+    public static void handleMouseInput(GuiContainer gui) {
+        if (gui == null || isCreativeGui(gui) || isExcludedGui(gui) || !hasPagedInventory(gui)) {
             return;
         }
 
@@ -216,12 +255,9 @@ public final class GuiContainerInventoryPager
         updateSlots(gui);
     }
 
-    private static boolean hasPagedInventory(GuiContainer gui)
-    {
+    private static boolean hasPagedInventory(GuiContainer gui) {
         Container container = getContainer(gui);
-
-        if (container == null)
-        {
+        if (container == null) {
             return false;
         }
 
@@ -231,32 +267,32 @@ public final class GuiContainerInventoryPager
         return page0.size() == MAIN_PAGE_SIZE && page1.size() == MAIN_PAGE_SIZE;
     }
 
-    private static List<Slot> getPlayerSlots(Container container, int startInclusive, int endExclusive)
-    {
+    private static List<Slot> getPlayerSlots(Container container, int startInclusive, int endExclusive) {
         List<Slot> result = new ArrayList<Slot>();
 
-        if (container == null)
-        {
+        if (container == null) {
             return result;
         }
 
-        for (int wanted = startInclusive; wanted < endExclusive; wanted++)
-        {
+        List slots = NovaContainerBridge.getInventorySlots(container);
+        for (int wanted = startInclusive; wanted < endExclusive; ++wanted) {
             Slot found = null;
 
-            for (int i = 0; i < container.inventorySlots.size(); i++)
-            {
-                Slot slot = (Slot)container.inventorySlots.get(i);
+            for (int i = 0; i < slots.size(); ++i) {
+                Object object = slots.get(i);
 
-                if (slot.inventory instanceof InventoryPlayer && slot.getSlotIndex() == wanted)
-                {
+                if (!(object instanceof Slot)) {
+                    continue;
+                }
+
+                Slot slot = (Slot)object;
+                if (slot.inventory instanceof InventoryPlayer && slot.getSlotIndex() == wanted) {
                     found = slot;
                     break;
                 }
             }
 
-            if (found != null)
-            {
+            if (found != null) {
                 result.add(found);
             }
         }
@@ -265,13 +301,10 @@ public final class GuiContainerInventoryPager
     }
 
     private static void captureOriginalPositions(List<Slot> page0) {
-        for (int i = 0; i < page0.size(); i++)
-        {
+        for (int i = 0; i < page0.size(); i++) {
             Slot slot = page0.get(i);
 
-            if (!ORIGINAL_SLOT_POSITIONS.containsKey(slot))
-            {
-
+            if (!ORIGINAL_SLOT_POSITIONS.containsKey(slot)) {
                 if (slot.xDisplayPosition != HIDDEN_X && slot.yDisplayPosition != HIDDEN_Y) {
                     ORIGINAL_SLOT_POSITIONS.put(slot, new int[] {slot.xDisplayPosition, slot.yDisplayPosition});
                 }
@@ -279,31 +312,23 @@ public final class GuiContainerInventoryPager
         }
     }
 
-    private static int[] getOriginalPosition(Slot slot)
-    {
+    private static int[] getOriginalPosition(Slot slot) {
         int[] original = ORIGINAL_SLOT_POSITIONS.get(slot);
-
-        if (original != null)
-        {
+        if (original != null) {
             return original;
         }
 
         return new int[] {slot.xDisplayPosition, slot.yDisplayPosition};
     }
 
-    private static boolean isMouseOverScrollbar(GuiContainer gui, int mouseX, int mouseY)
-    {
+    private static boolean isMouseOverScrollbar(GuiContainer gui, int mouseX, int mouseY) {
         Container container = getContainer(gui);
-
-        if (container == null)
-        {
+        if (container == null) {
             return false;
         }
 
         List<Slot> page0 = getPlayerSlots(container, PAGE_0_START, PAGE_0_END);
-
-        if (page0.size() != MAIN_PAGE_SIZE)
-        {
+        if (page0.size() != MAIN_PAGE_SIZE) {
             return false;
         }
 
@@ -315,19 +340,14 @@ public final class GuiContainerInventoryPager
         return mouseX >= trackX && mouseX < trackX + SCROLLBAR_WIDTH && mouseY >= trackY - SCROLLBAR_CLICK_PADDING && mouseY < trackY + SCROLLBAR_HEIGHT + SCROLLBAR_CLICK_PADDING;
     }
 
-    private static void setPageFromMouse(GuiContainer gui, int mouseX)
-    {
+    private static void setPageFromMouse(GuiContainer gui, int mouseX) {
         Container container = getContainer(gui);
-
-        if (container == null)
-        {
+        if (container == null) {
             return;
         }
 
         List<Slot> page0 = getPlayerSlots(container, PAGE_0_START, PAGE_0_END);
-
-        if (page0.size() != MAIN_PAGE_SIZE)
-        {
+        if (page0.size() != MAIN_PAGE_SIZE) {
             return;
         }
 
@@ -336,25 +356,19 @@ public final class GuiContainerInventoryPager
         int trackX = getScrollbarTrackX(gui);
         int relativeX = mouseX - trackX;
 
-        if (relativeX < SCROLLBAR_WIDTH / 2)
-        {
+        if (relativeX < SCROLLBAR_WIDTH / 2) {
             setPage(0);
-        }
-        else
-        {
+        } else {
             setPage(1);
         }
     }
 
-    private static void setPage(int page)
-    {
-        if (page < 0)
-        {
+    private static void setPage(int page) {
+        if (page < 0) {
             page = 0;
         }
 
-        if (page > 1)
-        {
+        if (page > 1) {
             page = 1;
         }
 
@@ -362,36 +376,36 @@ public final class GuiContainerInventoryPager
         syncPageToServer(page);
     }
 
-    private static void syncPageToServer(int page)
-    {
+    private static void syncPageToServer(int page) {
         try {
             //This allows for shift clicking to prioritize the tab open first
             NovaInventory.NETWORK.sendToServer(new PacketInventoryPage(page));
         }
-        catch (Throwable ignored)
-        {
+        catch (Throwable ignored) {
 
         }
     }
 
     private static boolean isExcludedGui(GuiContainer gui) {
-        String name = gui.getClass().getName();
-        return "net.minecraft.client.gui.inventory.GuiInventory".equals(name) || "net.minecraft.client.gui.inventory.GuiContainerCreative".equals(name);
+        if (gui == null) {
+            return true;
+        }
+
+        String className = gui.getClass().getName();
+
+        return "net.minecraft.client.gui.inventory.GuiInventory".equals(className) || "net.minecraft.client.gui.inventory.GuiContainerCreative".equals(className) || "com.NovaInv.GuiInventoryOverwrite".equals(className) || "com.NovaInv.GuiContainerCreativeOverwrite".equals(className);
     }
 
     private static Container getContainer(GuiContainer gui) {
         try {
-            if (inventorySlotsField == null)
-            {
+            if (inventorySlotsField == null) {
                 inventorySlotsField = findField(GuiContainer.class, new String[] {"inventorySlots", "field_147002_h"});
-
                 inventorySlotsField.setAccessible(true);
             }
 
             return (Container)inventorySlotsField.get(gui);
         }
-        catch (Throwable t)
-        {
+        catch (Throwable t) {
             return null;
         }
     }
@@ -400,43 +414,36 @@ public final class GuiContainerInventoryPager
         try {
             if (guiLeftField == null) {
                 guiLeftField = findField(GuiContainer.class, new String[] {"guiLeft", "field_147003_i"});
-
                 guiLeftField.setAccessible(true);
             }
 
             return guiLeftField.getInt(gui);
         }
-        catch (Throwable t)
-        {
+        catch (Throwable t) {
             return 0;
         }
     }
 
     private static int getGuiTop(GuiContainer gui) {
         try {
-            if (guiTopField == null)
-            {
+            if (guiTopField == null) {
                 guiTopField = findField(GuiContainer.class, new String[] {"guiTop", "field_147009_r"});
                 guiTopField.setAccessible(true);
             }
 
             return guiTopField.getInt(gui);
         }
-        catch (Throwable t)
-        {
+        catch (Throwable t) {
             return 0;
         }
     }
 
     private static Field findField(Class clazz, String[] names) throws NoSuchFieldException {
-        for (int i = 0; i < names.length; i++)
-        {
-            try
-            {
+        for (int i = 0; i < names.length; i++) {
+            try {
                 return clazz.getDeclaredField(names[i]);
             }
-            catch (NoSuchFieldException ignored)
-            {
+            catch (NoSuchFieldException ignored) {
             }
         }
 
@@ -479,5 +486,9 @@ public final class GuiContainerInventoryPager
         int[] original = getOriginalPosition(row3First);
 
         return top + original[1] + 18 + SCROLLBAR_Y_OFFSET;
+    }
+
+    private static boolean isCreativeGui(GuiContainer gui) {
+        return gui != null && gui.getClass() == net.minecraft.client.gui.inventory.GuiContainerCreative.class;
     }
 }

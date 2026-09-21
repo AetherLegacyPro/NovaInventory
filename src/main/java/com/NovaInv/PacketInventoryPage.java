@@ -7,52 +7,44 @@ import io.netty.buffer.ByteBuf;
 import net.minecraft.entity.player.EntityPlayerMP;
 
 public class PacketInventoryPage implements IMessage {
+
     private int page;
+    private boolean creativeSecondPageEnabled;
 
     public PacketInventoryPage() {
     }
 
     public PacketInventoryPage(int page) {
-        if (page < 0)
-        {
-            page = 0;
-        }
-
-        if (page > 1)
-        {
-            page = 1;
-        }
-
-        this.page = page;
+        this(page, false);
     }
 
-    public void fromBytes(ByteBuf buf) {
-        this.page = buf.readByte();
-
-        if (this.page < 0)
-        {
-            this.page = 0;
-        }
-
-        if (this.page > 1)
-        {
-            this.page = 1;
-        }
+    public PacketInventoryPage(int page, boolean creativeSecondPageEnabled) {
+        this.page = page == 1 ? 1 : 0;
+        this.creativeSecondPageEnabled = creativeSecondPageEnabled;
     }
 
-    public void toBytes(ByteBuf buf) {
-        buf.writeByte(this.page);
+    @Override
+    public void fromBytes(ByteBuf buffer) {
+        this.page = buffer.readUnsignedByte() == 1 ? 1 : 0;
+        this.creativeSecondPageEnabled = buffer.readBoolean();
+    }
+
+    @Override
+    public void toBytes(ByteBuf buffer) {
+        buffer.writeByte(this.page);
+        buffer.writeBoolean(this.creativeSecondPageEnabled);
     }
 
     public static class Handler implements IMessageHandler<PacketInventoryPage, IMessage> {
-        public IMessage onMessage(PacketInventoryPage message, MessageContext ctx)
-        {
-            EntityPlayerMP player = ctx.getServerHandler().playerEntity;
+
+        @Override
+        public IMessage onMessage(PacketInventoryPage message, MessageContext context) {
+            EntityPlayerMP player = context.getServerHandler().playerEntity;
 
             InventoryPageServerState.setPage(player, message.page);
+            InventoryPageServerState.setCreativeSecondPageEnabled(player, message.creativeSecondPageEnabled);
 
             return null;
         }
     }
 }
-

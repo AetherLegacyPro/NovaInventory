@@ -6,6 +6,7 @@ import net.minecraft.entity.player.EntityPlayer;
 
 public final class InventoryPageServerState {
     private static final Map<String, Integer> PLAYER_PAGES = new ConcurrentHashMap<String, Integer>();
+    private static final Map<String, Boolean> CREATIVE_SECOND_PAGE = new ConcurrentHashMap<String, Boolean>();
 
     private InventoryPageServerState() {
     }
@@ -21,15 +22,7 @@ public final class InventoryPageServerState {
             return 0;
         }
 
-        if (page < 0) {
-            return 0;
-        }
-
-        if (page > 1) {
-            return 1;
-        }
-
-        return page;
+        return page.intValue() == 1 ? 1 : 0;
     }
 
     public static void setPage(EntityPlayer player, int page) {
@@ -37,14 +30,35 @@ public final class InventoryPageServerState {
             return;
         }
 
-        if (page < 0) {
-            page = 0;
+        PLAYER_PAGES.put(player.getCommandSenderName(), Integer.valueOf(page == 1 ? 1 : 0));
+    }
+
+    public static boolean isCreativeSecondPageEnabled(EntityPlayer player) {
+        if (player == null) {
+            return false;
         }
 
-        if (page > 1) {
-            page = 1;
+        Boolean enabled = CREATIVE_SECOND_PAGE.get(player.getCommandSenderName());
+
+        return enabled != null && enabled.booleanValue();
+    }
+
+    public static void setCreativeSecondPageEnabled(EntityPlayer player, boolean enabled) {
+        if (player == null) {
+            return;
         }
 
-        PLAYER_PAGES.put(player.getCommandSenderName(), page);
+        CREATIVE_SECOND_PAGE.put(player.getCommandSenderName(), Boolean.valueOf(enabled));
+    }
+
+    public static void removePlayer(EntityPlayer player) {
+        if (player == null) {
+            return;
+        }
+
+        String name = player.getCommandSenderName();
+
+        PLAYER_PAGES.remove(name);
+        CREATIVE_SECOND_PAGE.remove(name);
     }
 }

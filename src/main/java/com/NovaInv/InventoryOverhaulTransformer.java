@@ -2,26 +2,24 @@ package com.NovaInv;
 
 import cpw.mods.fml.common.asm.transformers.deobf.FMLDeobfuscatingRemapper;
 import net.minecraft.launchwrapper.IClassTransformer;
-import org.objectweb.asm.ClassReader;
-import org.objectweb.asm.ClassVisitor;
-import org.objectweb.asm.ClassWriter;
-import org.objectweb.asm.Type;
+import net.minecraft.launchwrapper.Launch;
+import org.objectweb.asm.*;
 import org.objectweb.asm.commons.RemappingClassAdapter;
 import org.objectweb.asm.commons.SimpleRemapper;
 import org.objectweb.asm.tree.*;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URL;
 import java.util.HashMap;
 import java.util.ListIterator;
+import java.util.Locale;
 import java.util.Map;
 
 public class InventoryOverhaulTransformer implements IClassTransformer {
     private static final String INVENTORY_PLAYER = "net.minecraft.entity.player.InventoryPlayer";
 
     private static final String CONTAINER_PLAYER = "net.minecraft.inventory.ContainerPlayer";
-
-    private static final String GUI_INVENTORY = "net.minecraft.client.gui.inventory.GuiInventory";
 
     private static final String GUI_CONTAINER = "net.minecraft.client.gui.inventory.GuiContainer";
 
@@ -55,6 +53,10 @@ public class InventoryOverhaulTransformer implements IClassTransformer {
 
     private static final String TARGET_GUI_CONTAINER_CREATIVE_SLOT = "net/minecraft/client/gui/inventory/GuiContainerCreative$CreativeSlot";
 
+
+    private static boolean archaicFixDetected;
+    private static boolean archaicFixMessagePrinted;
+
     @Override
     public byte[] transform(String name, String transformedName, byte[] basicClass) {
         if (basicClass == null) {
@@ -62,53 +64,78 @@ public class InventoryOverhaulTransformer implements IClassTransformer {
         }
 
         try {
+            //ArchaicFix Mixin conflict fix, should have just did a mixin to disable it...
+            if (isCreativeInventoryClass(transformedName) && isArchaicFixPresent()) {
+                if (!archaicFixMessagePrinted) {
+                    archaicFixMessagePrinted = true;
+                    System.out.println("[NovaInventory] ArchaicFix detected. " + "NovaInventory's creative inventory " + "overhaul is disabled.");
+                }
+
+                System.out.println("[NovaInventory] Leaving creative class untouched: " + transformedName);
+
+                return basicClass;
+            }
+
             if (INVENTORY_PLAYER.equals(transformedName)) {
-                System.out.println("[NovaInventory] Patching InventoryPlayer mainInventory size");
+                System.out.println("[NovaInventory] Patching InventoryPlayer " + "mainInventory size");
+
                 return patchInventoryPlayer(basicClass);
             }
 
             if (CONTAINER_PLAYER.equals(transformedName)) {
                 System.out.println("[NovaInventory] Replacing ContainerPlayer");
+
                 return replaceClass(REPLACEMENT_CONTAINER_PLAYER, TARGET_CONTAINER_PLAYER);
             }
 
-            if (GUI_INVENTORY.equals(transformedName)) {
-                System.out.println("[NovaInventory] Replacing GuiInventory");
-                return replaceClass(REPLACEMENT_GUI_INVENTORY, TARGET_GUI_INVENTORY);
+            //ArchaicFix Mixin conflict fix, should have just did a mixin to disable it...
+            if (NET_HANDLER_PLAY_SERVER.equals(transformedName)) {
+                if (isArchaicFixPresent()) {
+                    System.out.println("[NovaInventory] ArchaicFix detected; " + "skipping creative packet slot patch.");
+
+                    return basicClass;
+                }
+
+                System.out.println("[NovaInventory] Patching creative inventory " + "packet limit");
+
+                return patchNetHandlerPlayServer(basicClass);
+            }
+
+            //Global slot hook for other containers
+            if (CONTAINER.equals(transformedName)) {
+                System.out.println("[NovaInventory] Patching " + "Container.addSlotToContainer");
+
+                return patchContainerAddSlotToContainer(basicClass);
+            }
+
+            //Pager for vanilla blocks only
+            if (GUI_CONTAINER.equals(transformedName)) {
+                System.out.println("[NovaInventory] Patching GuiContainer " + "inventory pager");
+
+                return patchGuiContainer(basicClass);
             }
 
             if (GUI_CONTAINER_CREATIVE.equals(transformedName)) {
                 System.out.println("[NovaInventory] Replacing GuiContainerCreative");
+
                 return replaceClass(REPLACEMENT_GUI_CONTAINER_CREATIVE, TARGET_GUI_CONTAINER_CREATIVE);
             }
 
             if (GUI_CONTAINER_CREATIVE_CONTAINER.equals(transformedName)) {
-                System.out.println("[NovaInventory] Replacing GuiContainerCreative$ContainerCreative");
+                System.out.println("[NovaInventory] Replacing " + "GuiContainerCreative$ContainerCreative");
+
                 return replaceClass(REPLACEMENT_GUI_CONTAINER_CREATIVE_CONTAINER, TARGET_GUI_CONTAINER_CREATIVE_CONTAINER);
             }
 
             if (GUI_CONTAINER_CREATIVE_SLOT.equals(transformedName)) {
-                System.out.println("[NovaInventory] Replacing GuiContainerCreative$CreativeSlot");
+                System.out.println("[NovaInventory] Replacing " + "GuiContainerCreative$CreativeSlot");
+
                 return replaceClass(REPLACEMENT_GUI_CONTAINER_CREATIVE_SLOT, TARGET_GUI_CONTAINER_CREATIVE_SLOT);
-            }
-
-            if (NET_HANDLER_PLAY_SERVER.equals(transformedName)) {
-                System.out.println("[NovaInventory] Patching NetHandlerPlayServer creative inventory slot limit");
-                return patchNetHandlerPlayServer(basicClass);
-            }
-
-            if (CONTAINER.equals(transformedName)) {
-                System.out.println("[NovaInventory] Patching Container.addSlotToContainer");
-                return patchContainerAddSlotToContainer(basicClass);
-            }
-
-            if (GUI_CONTAINER.equals(transformedName)) {
-                System.out.println("[NovaInventory] Patching GuiContainer inventory pager");
-                return patchGuiContainer(basicClass);
             }
         }
         catch (Throwable throwable) {
             System.err.println("[NovaInventory] Failed transforming " + transformedName);
+
             throwable.printStackTrace();
 
             throw new RuntimeException("[NovaInventory] Critical transformer failure for " + transformedName, throwable);
@@ -117,9 +144,66 @@ public class InventoryOverhaulTransformer implements IClassTransformer {
         return basicClass;
     }
 
-    //Changes public ItemStack[] mainInventory = new ItemStack[36]; to public ItemStack[] mainInventory = new ItemStack[63];
-    private byte[] patchInventoryPlayer(byte[] basicClass)
-    {
+    private static boolean isCreativeInventoryClass(String transformedName) {
+        return GUI_CONTAINER_CREATIVE.equals(transformedName) || GUI_CONTAINER_CREATIVE_CONTAINER.equals(transformedName) || GUI_CONTAINER_CREATIVE_SLOT.equals(transformedName);
+    }
+
+    //ArchaicFix compact fix...
+    private static boolean isArchaicFixPresent() {
+        if (archaicFixDetected) {
+            return true;
+        }
+
+        try {
+            if (Launch.classLoader.getResource("mixins.archaicfix.early.json") != null) {
+                archaicFixDetected = true;
+
+                System.out.println("[NovaInventory] Detected ArchaicFix through " + "mixins.archaicfix.early.json");
+
+                return true;
+            }
+
+            if (Launch.classLoader.getResource("mixins.archaicfix.json") != null) {
+                archaicFixDetected = true;
+
+                System.out.println("[NovaInventory] Detected ArchaicFix through " + "mixins.archaicfix.json");
+
+                return true;
+            }
+
+            for (URL source : Launch.classLoader.getSources()) {
+                String path = source.toString().toLowerCase(Locale.ROOT);
+
+                if (path.contains("archaicfix")) {
+                    archaicFixDetected = true;
+
+                    System.out.println("[NovaInventory] Detected ArchaicFix " + "on classpath: " + source);
+
+                    return true;
+                }
+            }
+
+            Object tweakClasses = Launch.blackboard.get("TweakClasses");
+
+            if (tweakClasses != null && tweakClasses.toString().toLowerCase(Locale.ROOT).contains("archaicfix")) {
+                archaicFixDetected = true;
+
+                System.out.println("[NovaInventory] Detected ArchaicFix " + "through TweakClasses");
+
+                return true;
+            }
+        }
+        catch (Throwable throwable) {
+            System.err.println("[NovaInventory] Error detecting ArchaicFix");
+
+            throwable.printStackTrace();
+        }
+
+        return false;
+    }
+
+    //Overrides InventoryPlayer ItemStack[36] allocations to ItemStack[63].
+    private byte[] patchInventoryPlayer(byte[] basicClass) {
         ClassNode classNode = new ClassNode();
         ClassReader reader = new ClassReader(basicClass);
         reader.accept(classNode, 0);
@@ -130,30 +214,30 @@ public class InventoryOverhaulTransformer implements IClassTransformer {
             ListIterator<AbstractInsnNode> iterator = method.instructions.iterator();
 
             while (iterator.hasNext()) {
-                AbstractInsnNode insn = iterator.next();
+                AbstractInsnNode instruction = iterator.next();
 
-                if (insn instanceof IntInsnNode) {
-                    IntInsnNode intInsn = (IntInsnNode)insn;
+                if (!(instruction instanceof IntInsnNode)) {
+                    continue;
+                }
 
-                    if (intInsn.operand == 36 && isFollowedByItemStackAnewarray(intInsn)) {
-                        intInsn.operand = 63;
-                        patchedCount++;
+                IntInsnNode integerInstruction = (IntInsnNode)instruction;
+                if (integerInstruction.operand == 36 && isFollowedByItemStackAnewarray(integerInstruction)) {
+                    integerInstruction.operand = 63;
+                    ++patchedCount;
 
-                        System.out.println("[NovaInventory] Changed InventoryPlayer ItemStack array size 36 -> 63 in "
-                                + method.name + method.desc);
-                    }
+                    System.out.println("[NovaInventory] Changed InventoryPlayer " + "ItemStack array size 36 -> 63 in " + method.name + method.desc);
                 }
             }
         }
 
         if (patchedCount == 0) {
-            System.err.println("[NovaInventory] WARNING: Could not find any InventoryPlayer mainInventory allocations");
-        }
-        else {
+            System.err.println("[NovaInventory] WARNING: Could not find any " + "InventoryPlayer mainInventory allocations");
+        } else {
             System.out.println("[NovaInventory] Patched " + patchedCount + " InventoryPlayer ItemStack[36] allocation(s)");
         }
 
         ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+
         classNode.accept(writer);
         return writer.toByteArray();
     }
@@ -161,11 +245,11 @@ public class InventoryOverhaulTransformer implements IClassTransformer {
     private boolean isFollowedByItemStackAnewarray(AbstractInsnNode start) {
         AbstractInsnNode current = start.getNext();
 
-        for (int i = 0; i < 8 && current != null; i++) {
+        for (int i = 0; i < 8 && current != null; ++i) {
             if (current instanceof TypeInsnNode) {
-                TypeInsnNode typeInsn = (TypeInsnNode)current;
+                TypeInsnNode typeInstruction = (TypeInsnNode)current;
 
-                if (typeInsn.getOpcode() == org.objectweb.asm.Opcodes.ANEWARRAY) {
+                if (typeInstruction.getOpcode() == Opcodes.ANEWARRAY) {
                     return true;
                 }
             }
@@ -176,9 +260,6 @@ public class InventoryOverhaulTransformer implements IClassTransformer {
         return false;
     }
 
-    //Reads one of our replacement classes from the mod jar,
-    //Remaps its internal class name to the vanilla target class name and,
-    //Returns the resulting bytecode.
     private byte[] replaceClass(String replacementInternalName, String targetInternalName) throws IOException {
         byte[] replacementBytes = readClassBytes(replacementInternalName);
 
@@ -195,7 +276,6 @@ public class InventoryOverhaulTransformer implements IClassTransformer {
         mappings.put(REPLACEMENT_GUI_CONTAINER_CREATIVE_SLOT, TARGET_GUI_CONTAINER_CREATIVE_SLOT);
 
         ClassVisitor remapper = new RemappingClassAdapter(writer, new SimpleRemapper(mappings));
-
         reader.accept(remapper, ClassReader.EXPAND_FRAMES);
 
         System.out.println("[NovaInventory] Remapped " + replacementInternalName + " -> " + targetInternalName);
@@ -205,8 +285,8 @@ public class InventoryOverhaulTransformer implements IClassTransformer {
 
     private byte[] readClassBytes(String internalName) throws IOException {
         String path = "/" + internalName + ".class";
-        InputStream stream = InventoryOverhaulTransformer.class.getResourceAsStream(path);
 
+        InputStream stream = InventoryOverhaulTransformer.class.getResourceAsStream(path);
         if (stream == null) {
             throw new IOException("Could not find replacement class resource: " + path);
         }
@@ -228,7 +308,7 @@ public class InventoryOverhaulTransformer implements IClassTransformer {
         }
     }
 
-
+    //Server side overrides for the number of slots
     private byte[] patchNetHandlerPlayServer(byte[] basicClass) {
         ClassNode classNode = new ClassNode();
         ClassReader reader = new ClassReader(basicClass);
@@ -240,52 +320,48 @@ public class InventoryOverhaulTransformer implements IClassTransformer {
             ListIterator<AbstractInsnNode> iterator = method.instructions.iterator();
 
             while (iterator.hasNext()) {
-                AbstractInsnNode insn = iterator.next();
+                AbstractInsnNode instruction = iterator.next();
 
-                if (insn instanceof IntInsnNode) {
-                    IntInsnNode intInsn = (IntInsnNode)insn;
+                if (instruction instanceof IntInsnNode) {
+                    IntInsnNode integerInstruction = (IntInsnNode)instruction;
 
-                    if (intInsn.operand == 36 && isNearStaticIntCallAndIAdd(intInsn)) {
-                        intInsn.operand = 63;
-                        patchedCount++;
-
-                        System.out.println("[NovaInventory] Patched NetHandlerPlayServer creative base 36 -> 63 in " + method.name + method.desc);
+                    if (integerInstruction.operand == 36 && isNearStaticIntCallAndIAdd(integerInstruction)) {
+                        integerInstruction.operand = 63;
+                        ++patchedCount;
                     }
-                    else if (intInsn.operand == 45 && methodLooksLikeCreativeInventoryHandler(method)) {
-                        intInsn.operand = 72;
-                        patchedCount++;
 
-                        System.out.println("[NovaInventory] Patched NetHandlerPlayServer creative limit 45 -> 72 in " + method.name + method.desc);
+                    else if (integerInstruction.operand == 45 && methodLooksLikeCreativeInventoryHandler(method)) {
+                        integerInstruction.operand = 72;
+                        ++patchedCount;
                     }
                 }
-                else if (insn instanceof LdcInsnNode) {
-                    LdcInsnNode ldc = (LdcInsnNode)insn;
+                else if (instruction instanceof LdcInsnNode) {
+                    LdcInsnNode ldcInstruction = (LdcInsnNode)instruction;
 
-                    if (ldc.cst instanceof Integer) {
-                        int value = ((Integer)ldc.cst).intValue();
+                    if (!(ldcInstruction.cst instanceof Integer)) {
+                        continue;
+                    }
 
-                        if (value == 36 && isNearStaticIntCallAndIAdd(ldc)) {
-                            ldc.cst = Integer.valueOf(63);
-                            patchedCount++;
+                    int value = ((Integer)ldcInstruction.cst).intValue();
 
-                            System.out.println("[NovaInventory] Patched NetHandlerPlayServer creative LDC base 36 -> 63 in " + method.name + method.desc);
-                        }
-                        else if (value == 45 && methodLooksLikeCreativeInventoryHandler(method)) {
-                            ldc.cst = Integer.valueOf(72);
-                            patchedCount++;
+                    if (value == 36 && isNearStaticIntCallAndIAdd(ldcInstruction)) {
+                        ldcInstruction.cst = Integer.valueOf(63);
 
-                            System.out.println("[NovaInventory] Patched NetHandlerPlayServer creative LDC limit 45 -> 72 in " + method.name + method.desc);
-                        }
+                        ++patchedCount;
+                    }
+
+                    else if (value == 45 && methodLooksLikeCreativeInventoryHandler(method)) {
+                        ldcInstruction.cst = Integer.valueOf(72);
+                        ++patchedCount;
                     }
                 }
             }
         }
 
         if (patchedCount == 0) {
-            System.err.println("[NovaInventory] WARNING: NetHandlerPlayServer creative slot limit was NOT patched.");
-        }
-        else {
-            System.out.println("[NovaInventory] NetHandlerPlayServer creative slot patch count: " + patchedCount);
+            System.err.println("[NovaInventory] WARNING: Creative packet " + "slot limit was not patched");
+        } else {
+            System.out.println("[NovaInventory] Creative packet patch count: " + patchedCount);
         }
 
         ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
@@ -294,54 +370,38 @@ public class InventoryOverhaulTransformer implements IClassTransformer {
     }
 
     private boolean isNearStaticIntCallAndIAdd(AbstractInsnNode start) {
-        boolean foundStaticIntCall = false;
-        boolean foundIAdd = false;
-        AbstractInsnNode current = start.getNext();
-
-        for (int i = 0; i < 12 && current != null; i++) {
-            if (current instanceof MethodInsnNode) {
-                MethodInsnNode methodInsn = (MethodInsnNode)current;
-
-                if (methodInsn.getOpcode() == org.objectweb.asm.Opcodes.INVOKESTATIC && "()I".equals(methodInsn.desc)) {
-                    foundStaticIntCall = true;
-                }
-            }
-
-            if (current.getOpcode() == org.objectweb.asm.Opcodes.IADD) {
-                foundIAdd = true;
-            }
-
-            current = current.getNext();
-        }
-
-        if (foundStaticIntCall && foundIAdd) {
+        if (searchForStaticIntCallAndAdd(start.getNext(), true)) {
             return true;
         }
 
-        foundStaticIntCall = false;
-        foundIAdd = false;
-        current = start.getPrevious();
+        return searchForStaticIntCallAndAdd(start.getPrevious(), false);
+    }
 
-        for (int i = 0; i < 12 && current != null; i++) {
+    private boolean searchForStaticIntCallAndAdd(AbstractInsnNode start, boolean forward) {
+        boolean foundStaticIntCall = false;
+        boolean foundAdd = false;
+
+        AbstractInsnNode current = start;
+
+        for (int i = 0; i < 12 && current != null; ++i) {
             if (current instanceof MethodInsnNode) {
-                MethodInsnNode methodInsn = (MethodInsnNode)current;
+                MethodInsnNode methodInstruction = (MethodInsnNode)current;
 
-                if (methodInsn.getOpcode() == org.objectweb.asm.Opcodes.INVOKESTATIC && "()I".equals(methodInsn.desc)) {
+                if (methodInstruction.getOpcode() == Opcodes.INVOKESTATIC && "()I".equals(methodInstruction.desc)) {
                     foundStaticIntCall = true;
                 }
             }
 
-            if (current.getOpcode() == org.objectweb.asm.Opcodes.IADD) {
-                foundIAdd = true;
+            if (current.getOpcode() == Opcodes.IADD) {
+                foundAdd = true;
             }
 
-            current = current.getPrevious();
+            current = forward ? current.getNext() : current.getPrevious();
         }
 
-        return foundStaticIntCall && foundIAdd;
+        return foundStaticIntCall && foundAdd;
     }
 
-    //Is the container call for things like the player inventory, hotbar etc: still needs work...
     private boolean methodLooksLikeCreativeInventoryHandler(MethodNode method) {
         if ("processCreativeInventoryAction".equals(method.name) || "func_147344_a".equals(method.name) || method.desc.contains("C10PacketCreativeInventoryAction")) {
             return true;
@@ -353,32 +413,31 @@ public class InventoryOverhaulTransformer implements IClassTransformer {
         ListIterator<AbstractInsnNode> iterator = method.instructions.iterator();
 
         while (iterator.hasNext()) {
-            AbstractInsnNode insn = iterator.next();
+            AbstractInsnNode instruction = iterator.next();
 
-            if (insn instanceof TypeInsnNode) {
-                TypeInsnNode typeInsn = (TypeInsnNode)insn;
+            if (instruction instanceof TypeInsnNode) {
+                TypeInsnNode typeInstruction = (TypeInsnNode)instruction;
 
-                if (typeInsn.desc != null && typeInsn.desc.contains("ItemStack"))
-                {
+                if (typeInstruction.desc != null && typeInstruction.desc.contains("ItemStack")) {
                     hasItemStackReference = true;
                 }
             }
 
-            if (insn instanceof MethodInsnNode) {
-                MethodInsnNode methodInsn = (MethodInsnNode)insn;
+            if (instruction instanceof MethodInsnNode) {
+                MethodInsnNode methodInstruction = (MethodInsnNode)instruction;
 
-                if (methodInsn.desc != null && methodInsn.desc.contains("ItemStack"))
-                {
+                if (methodInstruction.desc != null && methodInstruction.desc.contains("ItemStack")) {
                     hasItemStackReference = true;
                 }
             }
 
-            if (insn.getOpcode() == org.objectweb.asm.Opcodes.IFGE || insn.getOpcode() == org.objectweb.asm.Opcodes.IFLT) {
+            if (instruction.getOpcode() == Opcodes.IFGE || instruction.getOpcode() == Opcodes.IFLT) {
                 hasNegativeSlotCheck = true;
             }
         }
 
-        return hasNegativeSlotCheck && hasItemStackReference;
+        return hasNegativeSlotCheck
+                && hasItemStackReference;
     }
 
     private byte[] patchContainerAddSlotToContainer(byte[] basicClass) {
@@ -393,35 +452,35 @@ public class InventoryOverhaulTransformer implements IClassTransformer {
                 continue;
             }
 
-            System.out.println("[NovaInventory] Found Container.addSlotToContainer candidate: " + method.name + method.desc);
-
             ListIterator<AbstractInsnNode> iterator = method.instructions.iterator();
 
             while (iterator.hasNext()) {
-                AbstractInsnNode insn = iterator.next();
+                AbstractInsnNode instruction = iterator.next();
 
-                if (insn.getOpcode() == org.objectweb.asm.Opcodes.ARETURN) {
-                    InsnList inject = new InsnList();
-                    inject.add(new VarInsnNode(org.objectweb.asm.Opcodes.ALOAD, 0));
-                    inject.add(new VarInsnNode(org.objectweb.asm.Opcodes.ALOAD, 1));
-                    inject.add(new MethodInsnNode(org.objectweb.asm.Opcodes.INVOKESTATIC, "com/NovaInv/InventoryContainerHooks", "onSlotAdded", "(Lnet/minecraft/inventory/Container;Lnet/minecraft/inventory/Slot;)V"));
-                    method.instructions.insertBefore(insn, inject);
-
-                    patchedCount++;
-
-                    System.out.println("[NovaInventory] Injected InventoryContainerHooks.onSlotAdded into " + method.name + method.desc);
+                if (instruction.getOpcode() != Opcodes.ARETURN) {
+                    continue;
                 }
+
+                InsnList injection = new InsnList();
+                injection.add(new VarInsnNode(Opcodes.ALOAD, 0));
+                injection.add(new VarInsnNode(Opcodes.ALOAD, 1));
+
+                injection.add(new MethodInsnNode(Opcodes.INVOKESTATIC, "com/NovaInv/InventoryContainerHooks", "onSlotAdded", "(Lnet/minecraft/inventory/Container;" + "Lnet/minecraft/inventory/Slot;)V"));
+
+                method.instructions.insertBefore(instruction, injection);
+
+                ++patchedCount;
             }
         }
 
         if (patchedCount == 0) {
-            System.err.println("[NovaInventory] WARNING: Could not patch Container.addSlotToContainer");
-        }
-        else {
-            System.out.println("[NovaInventory] Patched Container.addSlotToContainer injection count: " + patchedCount);
+            System.err.println("[NovaInventory] WARNING: Could not patch " + "Container.addSlotToContainer");
+        } else {
+            System.out.println("[NovaInventory] Container slot-hook count: " + patchedCount);
         }
 
         ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+
         classNode.accept(writer);
         return writer.toByteArray();
     }
@@ -431,7 +490,7 @@ public class InventoryOverhaulTransformer implements IClassTransformer {
             return false;
         }
 
-        if ((method.access & org.objectweb.asm.Opcodes.ACC_STATIC) != 0) {
+        if ((method.access & Opcodes.ACC_STATIC) != 0) {
             return false;
         }
 
@@ -441,17 +500,17 @@ public class InventoryOverhaulTransformer implements IClassTransformer {
         ListIterator<AbstractInsnNode> iterator = method.instructions.iterator();
 
         while (iterator.hasNext()) {
-            AbstractInsnNode insn = iterator.next();
+            AbstractInsnNode instruction = iterator.next();
 
-            if (insn instanceof MethodInsnNode) {
-                MethodInsnNode methodInsn = (MethodInsnNode)insn;
+            if (instruction instanceof MethodInsnNode) {
+                MethodInsnNode methodInstruction = (MethodInsnNode)instruction;
 
-                if ("java/util/List".equals(methodInsn.owner) && "add".equals(methodInsn.name) && "(Ljava/lang/Object;)Z".equals(methodInsn.desc)) {
-                    listAddCalls++;
+                if ("java/util/List".equals(methodInstruction.owner) && "add".equals(methodInstruction.name) && "(Ljava/lang/Object;)Z".equals(methodInstruction.desc)) {
+                    ++listAddCalls;
                 }
             }
 
-            if (insn.getOpcode() == org.objectweb.asm.Opcodes.ARETURN) {
+            if (instruction.getOpcode() == Opcodes.ARETURN) {
                 hasAreturn = true;
             }
         }
@@ -459,30 +518,18 @@ public class InventoryOverhaulTransformer implements IClassTransformer {
         return listAddCalls >= 2 && hasAreturn;
     }
 
-    private boolean isOneObjectArgSameObjectReturn(String desc) {
-        if (desc == null) {
+    private boolean isOneObjectArgSameObjectReturn(String descriptor) {
+        if (descriptor == null) {
             return false;
         }
 
         try {
-            Type[] args = Type.getArgumentTypes(desc);
-            Type returnType = Type.getReturnType(desc);
+            Type[] arguments = Type.getArgumentTypes(descriptor);
+            Type returnType = Type.getReturnType(descriptor);
 
-            if (args.length != 1) {
-                return false;
-            }
-
-            if (args[0].getSort() != Type.OBJECT) {
-                return false;
-            }
-
-            if (returnType.getSort() != Type.OBJECT) {
-                return false;
-            }
-
-            return args[0].getInternalName().equals(returnType.getInternalName());
+            return arguments.length == 1 && arguments[0].getSort() == Type.OBJECT && returnType.getSort() == Type.OBJECT && arguments[0].getInternalName().equals(returnType.getInternalName());
         }
-        catch (Throwable t) {
+        catch (Throwable ignored) {
             return false;
         }
     }
@@ -491,8 +538,8 @@ public class InventoryOverhaulTransformer implements IClassTransformer {
         ClassNode classNode = new ClassNode();
         ClassReader reader = new ClassReader(basicClass);
         reader.accept(classNode, 0);
+
         String owner = classNode.name;
-        System.out.println("[NovaInventory] Patching GuiContainer owner=" + owner);
 
         int patchedCount = 0;
         boolean patchedDrawScreen = false;
@@ -501,107 +548,91 @@ public class InventoryOverhaulTransformer implements IClassTransformer {
 
         for (MethodNode method : classNode.methods) {
             if (isGuiContainerDrawScreen(owner, method)) {
-                System.out.println("[NovaInventory] Found GuiContainer.drawScreen: " + method.name + method.desc + " owner=" + owner);
+                InsnList startInjection = new InsnList();
 
-                InsnList startInject = new InsnList();
-                startInject.add(new VarInsnNode(org.objectweb.asm.Opcodes.ALOAD, 0));
-                startInject.add(new MethodInsnNode(org.objectweb.asm.Opcodes.INVOKESTATIC, "com/NovaInv/GuiContainerInventoryPager", "updateSlots", "(Lnet/minecraft/client/gui/inventory/GuiContainer;)V"));
+                startInjection.add(new VarInsnNode(Opcodes.ALOAD, 0));
+
+                startInjection.add(new MethodInsnNode(Opcodes.INVOKESTATIC, "com/NovaInv/GuiContainerInventoryPager", "updateSlots", "(Lnet/minecraft/client/gui/inventory/" + "GuiContainer;)V"));
+
                 AbstractInsnNode first = getFirstRealInstruction(method);
 
                 if (first != null) {
-                    method.instructions.insertBefore(first, startInject);
-                }
-                else {
-                    method.instructions.insert(startInject);
+                    method.instructions.insertBefore(first, startInjection);
+                } else {
+                    method.instructions.insert(startInjection);
                 }
 
-                patchedCount++;
-                boolean injectedAfterPopMatrix = false;
+                ++patchedCount;
+
                 ListIterator<AbstractInsnNode> iterator = method.instructions.iterator();
 
                 while (iterator.hasNext()) {
-                    AbstractInsnNode insn = iterator.next();
+                    AbstractInsnNode instruction = iterator.next();
 
-                    if (isGL11PopMatrixCall(insn)) {
-                        InsnList drawInject = new InsnList();
-                        drawInject.add(new VarInsnNode(org.objectweb.asm.Opcodes.ALOAD, 0));
-                        drawInject.add(new MethodInsnNode(org.objectweb.asm.Opcodes.INVOKESTATIC, "com/NovaInv/GuiContainerInventoryPager", "drawScrollbar", "(Lnet/minecraft/client/gui/inventory/GuiContainer;)V"));
-                        method.instructions.insert(insn, drawInject);
-
-                        patchedCount++;
-                        injectedAfterPopMatrix = true;
-
-                        System.out.println("[NovaInventory] Injected scrollbar after GL11.glPopMatrix in " + method.name + method.desc);
-
-                        break;
+                    if (!isGL11PopMatrixCall(instruction)) {
+                        continue;
                     }
-                }
 
-                if (!injectedAfterPopMatrix) {
-                    System.err.println("[NovaInventory] WARNING: Could not find GL11.glPopMatrix; using RETURN fallback");
+                    InsnList drawInjection = new InsnList();
+                    drawInjection.add(new VarInsnNode(Opcodes.ALOAD, 0));
 
-                    ListIterator<AbstractInsnNode> returnIterator = method.instructions.iterator();
+                    drawInjection.add(new MethodInsnNode(Opcodes.INVOKESTATIC, "com/NovaInv/GuiContainerInventoryPager", "drawScrollbar", "(Lnet/minecraft/client/gui/inventory/" + "GuiContainer;)V"));
 
-                    while (returnIterator.hasNext()) {
-                        AbstractInsnNode insn = returnIterator.next();
+                    method.instructions.insert(instruction, drawInjection);
 
-                        if (insn.getOpcode() == org.objectweb.asm.Opcodes.RETURN) {
-                            InsnList returnInject = new InsnList();
-
-                            returnInject.add(new VarInsnNode(org.objectweb.asm.Opcodes.ALOAD, 0));
-                            returnInject.add(new MethodInsnNode(org.objectweb.asm.Opcodes.INVOKESTATIC, "com/NovaInv/GuiContainerInventoryPager", "drawScrollbar", "(Lnet/minecraft/client/gui/inventory/GuiContainer;)V"));
-
-                            method.instructions.insertBefore(insn, returnInject);
-                            patchedCount++;
-                        }
-                    }
+                    ++patchedCount;
+                    break;
                 }
 
                 patchedDrawScreen = true;
             }
             else if (isGuiContainerMouseClicked(owner, method)) {
-                System.out.println("[NovaInventory] Found GuiContainer.mouseClicked: " + method.name + method.desc + " owner=" + owner);
-
                 LabelNode continueLabel = new LabelNode();
-                InsnList inject = new InsnList();
-                inject.add(new VarInsnNode(org.objectweb.asm.Opcodes.ALOAD, 0));
-                inject.add(new VarInsnNode(org.objectweb.asm.Opcodes.ILOAD, 1));
-                inject.add(new VarInsnNode(org.objectweb.asm.Opcodes.ILOAD, 2));
-                inject.add(new VarInsnNode(org.objectweb.asm.Opcodes.ILOAD, 3));
-                inject.add(new MethodInsnNode(org.objectweb.asm.Opcodes.INVOKESTATIC, "com/NovaInv/GuiContainerInventoryPager", "mouseClicked", "(Lnet/minecraft/client/gui/inventory/GuiContainer;III)Z"));
-                inject.add(new JumpInsnNode(org.objectweb.asm.Opcodes.IFEQ, continueLabel));
-                inject.add(new InsnNode(org.objectweb.asm.Opcodes.RETURN));
-                inject.add(continueLabel);
+                InsnList injection = new InsnList();
+
+                injection.add(new VarInsnNode(Opcodes.ALOAD, 0));
+                injection.add(new VarInsnNode(Opcodes.ILOAD, 1));
+                injection.add(new VarInsnNode(Opcodes.ILOAD, 2));
+                injection.add(new VarInsnNode(Opcodes.ILOAD, 3));
+
+                injection.add(new MethodInsnNode(Opcodes.INVOKESTATIC, "com/NovaInv/GuiContainerInventoryPager", "mouseClicked", "(Lnet/minecraft/client/gui/inventory/" + "GuiContainer;III)Z"));
+
+                injection.add(new JumpInsnNode(Opcodes.IFEQ, continueLabel));
+
+                injection.add(new InsnNode(Opcodes.RETURN));
+
+                injection.add(continueLabel);
 
                 AbstractInsnNode first = getFirstRealInstruction(method);
 
                 if (first != null) {
-                    method.instructions.insertBefore(first, inject);
-                }
-                else {
-                    method.instructions.insert(inject);
+                    method.instructions.insertBefore(first, injection);
+                } else {
+                    method.instructions.insert(injection);
                 }
 
-                patchedCount++;
+                ++patchedCount;
                 patchedMouseClicked = true;
             }
             else if (isGuiContainerHandleMouseInput(owner, method)) {
-                System.out.println("[NovaInventory] Found GuiContainer.handleMouseInput: " + method.name + method.desc + " owner=" + owner);
-
                 ListIterator<AbstractInsnNode> iterator = method.instructions.iterator();
 
                 while (iterator.hasNext()) {
-                    AbstractInsnNode insn = iterator.next();
+                    AbstractInsnNode instruction = iterator.next();
 
-                    if (insn.getOpcode() == org.objectweb.asm.Opcodes.RETURN) {
-                        InsnList inject = new InsnList();
-
-                        inject.add(new VarInsnNode(org.objectweb.asm.Opcodes.ALOAD, 0));
-                        inject.add(new MethodInsnNode(org.objectweb.asm.Opcodes.INVOKESTATIC, "com/NovaInv/GuiContainerInventoryPager", "handleMouseInput", "(Lnet/minecraft/client/gui/inventory/GuiContainer;)V"));
-
-                        method.instructions.insertBefore(insn, inject);
-                        patchedCount++;
+                    if (instruction.getOpcode() != Opcodes.RETURN) {
+                        continue;
                     }
+
+                    InsnList injection = new InsnList();
+
+                    injection.add(new VarInsnNode(Opcodes.ALOAD, 0));
+
+                    injection.add(new MethodInsnNode(Opcodes.INVOKESTATIC, "com/NovaInv/GuiContainerInventoryPager", "handleMouseInput", "(Lnet/minecraft/client/gui/inventory/" + "GuiContainer;)V"));
+
+                    method.instructions.insertBefore(instruction, injection);
+
+                    ++patchedCount;
                 }
 
                 patchedMouseInput = true;
@@ -609,30 +640,22 @@ public class InventoryOverhaulTransformer implements IClassTransformer {
         }
 
         if (!patchedDrawScreen) {
-            System.err.println("[NovaInventory] WARNING: GuiContainer drawScreen was not patched");
+            System.err.println("[NovaInventory] WARNING: GuiContainer.drawScreen " + "was not patched");
         }
 
         if (!patchedMouseClicked) {
-            System.err.println("[NovaInventory] WARNING: GuiContainer mouseClicked was not patched");
+            System.err.println("[NovaInventory] WARNING: GuiContainer.mouseClicked " + "was not patched");
         }
 
         if (!patchedMouseInput) {
-            System.err.println("[NovaInventory] WARNING: GuiContainer handleMouseInput was not patched");
-        }
-
-        if (patchedCount == 0) {
-            System.err.println("[NovaInventory] WARNING: Could not patch GuiContainer");
-        }
-        else {
-            System.out.println("[NovaInventory] Patched GuiContainer hook count: " + patchedCount);
+            System.err.println("[NovaInventory] WARNING: GuiContainer.handleMouseInput " + "was not patched");
         }
 
         ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+
         classNode.accept(writer);
         return writer.toByteArray();
     }
-
-    //Like a dozen helper methods because apparently calling the names of obs vs unobs classes is hell..
 
     private boolean isGuiContainerDrawScreen(String owner, MethodNode method) {
         return methodNameMatches(owner, method, "drawScreen", "func_73863_a") && "(IIF)V".equals(method.desc);
@@ -646,27 +669,26 @@ public class InventoryOverhaulTransformer implements IClassTransformer {
         return methodNameMatches(owner, method, "handleMouseInput", "func_146274_d") && "()V".equals(method.desc);
     }
 
-    private boolean isGL11PopMatrixCall(AbstractInsnNode insn) {
-        if (!(insn instanceof MethodInsnNode)) {
+    private boolean isGL11PopMatrixCall(AbstractInsnNode instruction) {
+        if (!(instruction instanceof MethodInsnNode)) {
             return false;
         }
 
-        MethodInsnNode methodInsn = (MethodInsnNode)insn;
+        MethodInsnNode methodInstruction = (MethodInsnNode)instruction;
 
-        return "org/lwjgl/opengl/GL11".equals(methodInsn.owner) && "glPopMatrix".equals(methodInsn.name) && "()V".equals(methodInsn.desc);
+        return "org/lwjgl/opengl/GL11".equals(methodInstruction.owner) && "glPopMatrix".equals(methodInstruction.name) && "()V".equals(methodInstruction.desc);
     }
 
     private AbstractInsnNode getFirstRealInstruction(MethodNode method) {
-        AbstractInsnNode insn = method.instructions.getFirst();
-
-        while (insn != null) {
-            int type = insn.getType();
+        AbstractInsnNode instruction = method.instructions.getFirst();
+        while (instruction != null) {
+            int type = instruction.getType();
 
             if (type != AbstractInsnNode.LABEL && type != AbstractInsnNode.LINE && type != AbstractInsnNode.FRAME) {
-                return insn;
+                return instruction;
             }
 
-            insn = insn.getNext();
+            instruction = instruction.getNext();
         }
 
         return null;
@@ -676,7 +698,7 @@ public class InventoryOverhaulTransformer implements IClassTransformer {
         try {
             return FMLDeobfuscatingRemapper.INSTANCE.mapMethodName(ownerInternalName, method.name, method.desc);
         }
-        catch (Throwable t) {
+        catch (Throwable ignored) {
             return method.name;
         }
     }
@@ -687,14 +709,12 @@ public class InventoryOverhaulTransformer implements IClassTransformer {
         }
 
         String mappedName = mapMethodName(ownerInternalName, method);
-
         if (mappedName.equals(mcpName) || mappedName.equals(srgName)) {
             return true;
         }
 
-        String deobfOwner = "net/minecraft/client/gui/inventory/GuiContainer";
-        String mappedWithDeobfOwner = mapMethodName(deobfOwner, method);
+        String mappedWithDeobfuscatedOwner = mapMethodName("net/minecraft/client/gui/inventory/GuiContainer", method);
 
-        return mappedWithDeobfOwner.equals(mcpName) || mappedWithDeobfOwner.equals(srgName);
+        return mappedWithDeobfuscatedOwner.equals(mcpName) || mappedWithDeobfuscatedOwner.equals(srgName);
     }
 }
